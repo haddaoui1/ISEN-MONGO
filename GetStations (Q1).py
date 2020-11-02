@@ -7,88 +7,86 @@ Created on Mon Oct 12 09:53:23 2020
 
 import requests
 import json
+from pymongo import MongoClient
 from pprint import pprint
 
-def get_vlille():
-    url = "https://opendata.lillemetropole.fr/api/records/1.0/search/?dataset=vlille-realtime&q=&rows=300&facet=libelle&facet=nom&facet=commune&facet=etat&facet=type&facet=etatconnexion"
+#url des apis
+lilleurl = "https://opendata.lillemetropole.fr/api/records/1.0/search/?dataset=vlille-realtime&q=&rows=-1"
+lyonurl = "https://download.data.grandlyon.com/ws/rdata/jcd_jcdecaux.jcdvelov/all.json"
+parisurl = "https://opendata.paris.fr/api/records/1.0/search/?dataset=velib-disponibilite-en-temps-reel&q=&rows=-1"
+rennesurl = "https://data.rennesmetropole.fr/api/records/1.0/search/?dataset=stations_vls&q=&lang=fr&rows=-1"
 
-    pload = {}
-    headers= {}
 
-    response=requests.request("GET", url, headers=headers, data=pload)
-
+def get_velib(apiurl):
+    response = requests.request("GET", apiurl)
     response_json = json.loads(response.text.encode('utf8'))
-
-    return response_json.get("records",[])
-
-Vlille= get_vlille()
-
-for vlille in Vlille:
-    pprint(vlille)
-
-#get stations
-#Lille
-
-def get_vlille():
-    
-    url = "https://opendata.lillemetropole.fr/api/records/1.0/search/?dataset=vlille-realtime&q=&rows=300&facet=libelle&facet=nom&facet=commune&facet=etat&facet=type&facet=etatconnexion"
-    payload = {}
-    headers= {}
-    response = requests.request("GET", url, headers=headers, data = payload)
-    response_json = json.loads(response.text.encode('utf8'))
-    return response_json.get("records", [])
-
-Vlille = get_vlille()
-for vlille in vlilles:
-    pprint(vlille)
+    if apiurl == lyonurl:
+        return response_json.get("values", []) #special treatment for lyon's api
+    else:
+        return response_json.get("records", [])
 
 
-    
-#lyon
+#loading data into variables
+vlille = get_velib(lilleurl)
+vlyon = get_velib(lyonurl)
+vparis = get_velib(parisurl)
+vrennes = get_velib(rennesurl)
+
+#formatting the data
+vlille_formatted = []
+for velib in vlille:
+    vlille_formatted.append({
+        "name": velib["fields"]["nom"],
+        "city": velib["fields"]["commune"],
+        "size": velib["fields"]["nbvelosdispo"] + velib["fields"]["nbplacesdispo"],
+        "geometry": velib["geometry"],
+        "TPE ": velib["fields"]["type"] != "SANS TPE",
+        "status": velib["fields"]["etat"] == "EN SERVICE",
+        "last update": velib["record_timestamp"] })
 
 
-def get_vlyon():
-    key="2f3f00af9ce4e0959c3611b330a7be5f1af2b436"
-    url = "https://api.jcdecaux.com/vls/v3/stations?contract=Lyon&apiKey=2f3f00af9ce4e0959c3611b330a7be5f1af2b436"
-    payload = {}
-    headers= {}
-    response = requests.request("GET", url, headers=headers, data = payload)
-    response_json = json.loads(response.text.encode('utf8'))
-    return response_json
-Vlille = get_vlyon()
-for vlille in vlilles:
-    pprint(vlille)
-    
-    
+vparis_formatted = []
+for velib in vparis:
+    vparis_formatted.append({
+        "name": velib["fields"]["name"],
+        "city": velib["fields"]["nom_arrondissement_communes"],
+        "size": velib["fields"]["capacity"],
+        "geometry": velib["geometry"],
+        "TPE ": False,
+        "status": velib["fields"]["is_renting"] == 'OUI' and velib["fields"]["is_returning"] == 'OUI',
+        "last update": velib["record_timestamp"] })
 
-#paris
+vlyon_formatted = []
+for velib in vlyon:
+    vlyon_formatted.append({
+        "name": velib["name"],
+        "city": velib["commune"],
+        "size": velib["bike_stands"],
+        "geometry": {"type": "Point", "coordinates": [velib["lng"], velib["lat"]]},
+        "TPE ": velib["banking"],
+        "status": velib["status"] == "OPEN",
+        "last update": velib["last_update"] })
 
-def get_vparis():
-    url = "https://opendata.paris.fr/api/records/1.0/search/?dataset=velib-disponibilite-en-temps-reel&q=&rows=2971&facet=name&facet=is_installed&facet=is_renting&facet=is_returning&facet=nom_arrondissement_communes"
-    payload = {}
-    headers= {}
-    response = requests.request("GET", url, headers=headers, data = payload)
-    response_json = json.loads(response.text.encode('utf8'))
-    return response_json.get("records", [])
-Vlille = get_vparis()
-for vlille in vlilles:
-    pprint(vlille)
-    
- 
-    
-#rennes   
+vrennes_formatted = []
+for velib in vrennes:
+    vrennes_formatted.append({
+        "name": velib["fields"]["nom"],
+        "city": "Rennes",
+        "size": velib["fields"]["nb_socles"],
+        "geometry": velib["geometry"],
+        "TPE ": velib["fields"]["tpe"] == "oui",
+        "status": velib["fields"]["etat"] == 'Ouverte',
+        "last update": velib["record_timestamp"] })
 
+#creating a connection instance
+client = MongoClient('mongodb+srv://mongo:1234@cluster0.t2irh.mongodb.net/bicycle?retryWrites=true&w=majority')
 
-def get_vrennes():
-    url = "https://data.rennesmetropole.fr/api/records/1.0/search/?dataset=etat-des-stations-le-velo-star-en-temps-reel&q=&rows=9969&facet=nom&facet=etat&facet=nombreemplacementsactuels&facet=nombreemplacementsdisponibles&facet=nombrevelosdisponibles"
-    payload = {}
-    headers= {}
-    response = requests.request("GET", url, headers=headers, data = payload)
-    response_json = json.loads(response.text.encode('utf8'))
-    return response_json.get("records", [])
-Vlilles = get_vrennes()
-for vlille in vlilles:
-    pprint(vlille)
+#data wipe then insertion into the stations collection
+db = client.bicycle
 
-    
-    
+db.stations.delete_many({})
+
+db.stations.insert_many(vlille_formatted)
+db.stations.insert_many(vrennes_formatted)
+db.stations.insert_many(vparis_formatted)
+db.stations.insert_many(vlyon_formatted)
